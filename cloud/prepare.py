@@ -38,10 +38,12 @@ conns["Cloud start"] = {"main": [[{"node": s, "type": "main", "index": 0} for s 
 UNIT = {"seconds": 1, "minutes": 60, "hours": 3600}
 for n in [n for n in nodes if n["type"] == "n8n-nodes-base.wait"]:
     p = n.get("parameters", {})
-    secs = float(p.get("amount", 1)) * UNIT.get(p.get("unit", "hours"), 3600)
+    # n8n leaves out default values on export: Wait v1 defaults to hours, v1.1+ to seconds
+    default_unit = "hours" if float(n.get("typeVersion", 1)) < 1.1 else "seconds"
+    secs = float(p.get("amount", 1)) * UNIT.get(p.get("unit", default_unit), 1)
     if secs < 65:
         continue
-    steps = math.ceil(secs / 60)
+    steps = min(10, math.ceil(secs / 60))   # never more than 10 minutes of waiting
     p["amount"], p["unit"] = 60, "seconds"
     after = conns.pop(n["name"], None)
     prev = n["name"]
