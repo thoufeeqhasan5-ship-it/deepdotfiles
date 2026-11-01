@@ -1,0 +1,37 @@
+name: deepdotfiles-cloud
+services:
+  n8n:
+    build: ../docker
+    environment:
+      - GENERIC_TIMEZONE=Asia/Kolkata
+      - TZ=Asia/Kolkata
+      - NODES_EXCLUDE=[]
+      - N8N_RESTRICT_FILE_ACCESS_TO=/files
+      - N8N_ENCRYPTION_KEY=${N8N_ENCRYPTION_KEY}
+      - N8N_DIAGNOSTICS_ENABLED=false
+      - N8N_LOG_LEVEL=warn
+    volumes:
+      - n8n_data:/home/node/.n8n
+      - ../files:/files
+      - ./run:/cloudrun
+  piper:
+    build: ../docker/piper
+    environment:
+      - PIPER_VOICE=en_US-ryan-high
+  kokoro:
+    image: ghcr.io/remsky/kokoro-fastapi-cpu:latest
+    ports:
+      - "8880:8880"
+  voice:            # Chatterbox narrator (falls back to Kokoro)
+    build: ../voice
+    environment:
+      - KOKORO_URL=http://kokoro:8880/dev/captioned_speech
+      - REF_VOICE=bm_george
+      - EXAGGERATION=0.6
+      - CFG_WEIGHT=0.35
+  remotion:         # animated edit (falls back to the ffmpeg edit)
+    build: ../remotion
+    volumes:
+      - ../files:/files
+volumes:
+  n8n_data:
