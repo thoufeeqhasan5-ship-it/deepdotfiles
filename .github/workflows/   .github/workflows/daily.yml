@@ -1,0 +1,62 @@
+name: Deep Dot Files videos
+
+on:
+  schedule:
+    # One video per run, about 9 AM, 2 PM and 7 PM India time.
+    # (GitHub times are UTC and often start a few minutes late.)
+    - cron: "20 3 * * *"    # ~9 AM IST  -> SPACE
+    - cron: "20 8 * * *"    # ~2 PM IST  -> OCEAN / NATURE
+    - cron: "20 13 * * *"   # ~7 PM IST  -> TECHNOLOGY
+  workflow_dispatch:
+    inputs:
+      slot:
+        description: "Which kind of story?"
+        type: choice
+        options: ["SPACE", "the OCEAN or NATURE", "TECHNOLOGY"]
+        default: "SPACE"
+      publish:
+        description: "Post to YouTube, Instagram and Facebook? (No = only make the video)"
+        type: boolean
+        default: false
+
+permissions:
+  contents: write   # lets the run save files/history.json (stories already posted)
+
+concurrency:
+  group: deepdotfiles
+  cancel-in-progress: false
+
+jobs:
+  make-and-post:
+    runs-on: ubuntu-latest
+    timeout-minutes: 75
+    env:
+      PUBLISH: ${{ github.event_name == 'schedule' || inputs.publish }}
+      FOCUS: ${{ github.event.schedule == '20 3 * * *' && 'SPACE' || github.event.schedule == '20 8 * * *' && 'the OCEAN or NATURE' || github.event.schedule == '20 13 * * *' && 'TECHNOLOGY' || inputs.slot }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Make (and post) the video
+        env:
+          N8N_CREDENTIALS: ${{ secrets.N8N_CREDENTIALS }}
+        run: bash cloud/run.sh
+
+      - name: Remember the story
+        if: success() && env.PUBLISH == 'true'
+        run: |
+          git config user.name "deepdotfiles-bot"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add files/history.json 2>/dev/null || exit 0
+          git commit -m "Story history" || exit 0
+          git pull --rebase && git push
+
+      - name: Keep the video for 7 days
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: video-${{ github.run_number }}
+          path: |
+            files/out/*.mp4
+            files/work/log_*.txt
+          retention-days: 7
+          if-no-files-found: ignore
