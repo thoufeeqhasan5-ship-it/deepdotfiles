@@ -99,7 +99,57 @@ if focus:
     ev_lines = "\n".join(f"T{i + 1}. [timeless, {e['area']}] {safe(e['title'])}\n   {safe(e['extract'])}\n   Link: {e['url']}"
                           for i, e in enumerate(evergreen)) or "(none today)"
     code = "const EVERGREEN_LIST = " + json.dumps(ev_lines) + ";\n" + code
+
+    # ---- Version 2 script: hook-first, 4 beats, loop ending, real-image search, fact cards ----
+    words = os.environ.get("SCRIPT_WORDS", "60-75")
+    a = code.find("For EACH story write 3 segments")
+    b = code.find("Return ONLY valid JSON")
+    if a < 0 or b < 0:
+        sys.exit("Build Prompt text changed - could not find the segment instructions.")
+    code = code[:a] + f"""For the story write 4 segments; together they are the video's spoken voiceover of {words} words, read at a calm but gripping pace. Short, punchy sentences (max 14 words each). Built for maximum watch time:
+- Segment 1 = THE HOOK, max 12 words: the single most startling fact or question, said in the first 2 seconds. No intro, no channel name, no "did you know".
+- Segment 2 = THE SETUP: what it is, where, who found it - told like a mystery unfolding.
+- Segment 3 = THE STRANGE PART: start with a turn like "But here's the strange part" and reveal the most surprising fact.
+- Segment 4 = THE PAYOFF + LOOP: what it might mean, then end with a short open question that connects back to the hook so the video loops naturally. Do NOT mention the channel name or ask people to follow.
+"hook_text": 2-4 BIG on-screen words that make people stop scrolling (e.g. "THIS SHOULDN'T EXIST", "NOBODY CAN EXPLAIN THIS", "IT'S STILL OUT THERE"). Must be honest.
+"facts": 1 or 2 striking facts taken EXACTLY from the source, each as a short "value" (a number with unit or a short term, max 12 characters, e.g. "11 KM", "1977", "-89 C", "13.8 BILLION") and a "label" of max 5 words (e.g. "below the ice"). Only facts that are in the source.
+"image_query": the English name of the real subject to find REAL photos of it (e.g. "Europa moon", "Antikythera mechanism", "giant squid", "Blood Falls Antarctica"). Never a person.
+The on-screen "title" is a CLEAR, plain-English headline that tells the viewer what the story is about in max 7 words (used for the post title).
+For each segment give "visuals": 3 DIFFERENT 1-3 word English stock-video search terms that show what is being said at that moment, as concretely and atmospherically as possible (e.g. "foggy forest", "deep ocean", "night sky stars", "arctic ice", "cave darkness", "telescope", "laboratory microscope"). Never use names of people or brands.
+"caption": start with a question people will want to answer in the comments (e.g. "Would you go down there?"), then 1 short line, then 4 relevant hashtags.
+
+""" + code[b:]
+    swaps2 = [
+        ('{ "text": "why it matters + closing line", "visuals": ["search term", "search term"] }',
+         '{ "text": "the strange part", "visuals": ["search term", "search term", "search term"] },\n        { "text": "payoff + looping question", "visuals": ["search term", "search term", "search term"] }'),
+        ('"source": "the Link of the story"',
+         '"source": "the Link of the story",\n      "hook_text": "2-4 big words",\n      "facts": [{ "value": "11 KM", "label": "below the ice" }],\n      "image_query": "name of the real subject"'),
+        ("source: { type: 'STRING' } } } } } } }",
+         "source: { type: 'STRING' }, hook_text: { type: 'STRING' }, image_query: { type: 'STRING' }, "
+         "facts: { type: 'ARRAY', items: { type: 'OBJECT', required: ['value', 'label'], properties: { value: { type: 'STRING' }, label: { type: 'STRING' } } } } } } } } } }"),
+        ("required: ['area', 'title', 'segments', 'caption', 'youtube_title', 'youtube_description', 'tags', 'source']",
+         "required: ['area', 'title', 'segments', 'caption', 'youtube_title', 'youtube_description', 'tags', 'source', 'hook_text', 'image_query', 'facts']"),
+    ]
+    for old, new in swaps2:
+        if code.count(old) != 1:
+            sys.exit(f"Build Prompt text changed - expected exactly one: {old[:60]}")
+        code = code.replace(old, new)
     bp["parameters"]["jsCode"] = code
+
+    ps = next(n for n in nodes if n["name"] == "Parse Stories")
+    pc = ps["parameters"]["jsCode"]
+    for old, new in [
+        (".slice(0, 2);\n    if (!v.length) v = ['city skyline'];", ".slice(0, 3);\n    if (!v.length) v = ['city skyline'];"),
+        ("tags: tags.join(','),",
+         "tags: tags.join(','),\n    hook_text: String(s.hook_text || '').slice(0, 40),\n    image_query: String(s.image_query || '').slice(0, 80),\n"
+         "    facts: (Array.isArray(s.facts) ? s.facts : []).slice(0, 2).map(f => ({ value: String(f.value || '').slice(0, 14), label: String(f.label || '').slice(0, 40) })).filter(f => f.value),\n"
+         "    source_url: String(s.source || ''),"),
+    ]:
+        if pc.count(old) != 1:
+            sys.exit(f"Parse Stories changed - expected exactly one: {old[:50]}")
+        pc = pc.replace(old, new)
+    pc = pc.replace("if (words > 100)", "if (words > 190)")
+    ps["parameters"]["jsCode"] = pc
 
     # save today's titles so the next runs avoid them
     vr = next(n for n in nodes if n["name"] == "Video Ready")
@@ -143,6 +193,10 @@ if os.environ.get("REMOTION") == "yes":
          "    `echo \"edit: ffmpeg backup (remotion said: $(tail -c 400 remo_${k}.log 2>/dev/null))\"`];\n"
          "  lines.splice(3, 0, ...remo);\n"
          "  return { ass, sh: lines.join('\\n') + '\\n', props: JSON.stringify(props) };"),
+        ("font: cfg.FONT_NAME, clips, rate, brand: cfg.CHANNEL_NAME });",
+         "font: cfg.FONT_NAME, clips, rate, brand: cfg.CHANNEL_NAME });\n"
+         "  if (plan.props) { const pp = JSON.parse(plan.props); Object.assign(pp, { hook: s.hook_text || '', facts: s.facts || [], imageQuery: s.image_query || '', "
+         "source: s.source_url || '', story: s.title }); plan.props = JSON.stringify(pp); }"),
         ("  file(`render_${k}.sh`, Buffer.from(plan.sh, 'utf8').toString('base64'), 'text/plain');",
          "  file(`render_${k}.sh`, Buffer.from(plan.sh, 'utf8').toString('base64'), 'text/plain');\n"
          "  if (plan.props) file(`props_${k}.json`, Buffer.from(plan.props, 'utf8').toString('base64'), 'application/json');"),
@@ -151,6 +205,7 @@ if os.environ.get("REMOTION") == "yes":
         if c.count(old) != 1:
             sys.exit(f"Prepare Render Files changed - expected exactly one: {old[:60]}")
         c = c.replace(old, new)
+    c = c.replace("duration > 75", "duration > 95")
     prf["parameters"]["jsCode"] = c
 
 wf["active"] = False
