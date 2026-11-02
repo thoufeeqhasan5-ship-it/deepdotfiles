@@ -18,30 +18,67 @@ const T = 14; // transition length in frames
 const clamp = {extrapolateLeft: 'clamp', extrapolateRight: 'clamp'};
 const cleanWord = (w) => String(w || '').replace(/[{}\\]/g, '').toUpperCase();
 
-// ---------- background scene (stock clip with slow camera move) ----------
-const Scene = ({src, idx, dur}) => {
+// ---------- one shot: stock clip or real photo ----------
+const kenBurns = (p, mode) => ({
+  scale: mode === 0 ? interpolate(p, [0, 1], [1.02, 1.14]) : mode === 1 ? interpolate(p, [0, 1], [1.14, 1.04]) : 1.1,
+  x: mode === 2 ? interpolate(p, [0, 1], [-40, 40]) : 0,
+  y: mode === 1 ? interpolate(p, [0, 1], [18, -18]) : 0,
+});
+
+const Shot = ({shot, len}) => {
   const f = useCurrentFrame();
-  const p = Math.min(1, f / Math.max(1, dur));
-  const mode = idx % 3;
-  const scale = mode === 0 ? interpolate(p, [0, 1], [1.02, 1.16]) : mode === 1 ? interpolate(p, [0, 1], [1.16, 1.04]) : 1.12;
-  const x = mode === 2 ? interpolate(p, [0, 1], [-45, 45]) : 0;
-  const y = mode === 1 ? interpolate(p, [0, 1], [20, -20]) : 0;
+  const {fps} = useVideoConfig();
+  const p = Math.min(1, f / Math.max(1, len));
+  const kb = kenBurns(p, shot.mode);
+  // punch-in on the very first shot, a small bump on every other cut
+  const punch = shot.opening ? interpolate(spring({frame: f, fps, config: {damping: 14, stiffness: 160}}), [0, 1], [0.28, 0])
+    : interpolate(f, [0, 6], [0.05, 0], clamp);
+  const src = shot.src;
+  const bg = {overflow: 'hidden', background: `radial-gradient(circle at 50% 40%, #0d3352 0%, ${NAVY} 70%)`};
+  if (!src) return <AbsoluteFill style={bg} />;
+  if (src.type === 'vid') {
+    return (
+      <AbsoluteFill style={bg}>
+        <OffthreadVideo src={src.src} muted startFrom={src.offset || 0} style={{
+          width: '100%', height: '100%', objectFit: 'cover',
+          transform: `scale(${kb.scale + punch}) translate(${kb.x}px, ${kb.y}px)`,
+          filter: 'saturate(0.9) contrast(1.08) brightness(0.88)',
+        }} />
+      </AbsoluteFill>
+    );
+  }
+  const wide = src.w / src.h > 0.75;
+  if (!wide) {
+    return (
+      <AbsoluteFill style={bg}>
+        <Img src={src.src} style={{width: '100%', height: '100%', objectFit: 'cover', transform: `scale(${kb.scale + punch}) translate(${kb.x}px, ${kb.y}px)`}} />
+      </AbsoluteFill>
+    );
+  }
+  // landscape photo: show the whole picture on a blurred copy of itself
+  const fw = 1000, fh = Math.min(820, Math.round(fw * src.h / src.w));
+  const zoom = interpolate(p, [0, 1], [1, 1.07]) + punch;
   return (
-    <AbsoluteFill style={{overflow: 'hidden', background: `radial-gradient(circle at 50% 40%, #0d3352 0%, ${NAVY} 70%)`}}>
-      {src ? (
-        <OffthreadVideo
-          src={src}
-          muted
-          style={{
-            width: '100%', height: '100%', objectFit: 'cover',
-            transform: `scale(${scale}) translate(${x}px, ${y}px)`,
-            filter: 'saturate(0.88) contrast(1.08) brightness(0.88)',
-          }}
-        />
-      ) : null}
+    <AbsoluteFill style={bg}>
+      <Img src={src.src} style={{width: '100%', height: '100%', objectFit: 'cover', filter: 'blur(38px) brightness(0.45) saturate(1.2)', transform: 'scale(1.25)'}} />
+      <div style={{
+        position: 'absolute', left: 40, top: 300 + (820 - fh) / 2, width: fw, height: fh, borderRadius: 28, overflow: 'hidden',
+        border: '2px solid rgba(51,214,224,0.35)', boxShadow: '0 30px 80px rgba(0,0,0,0.6), 0 0 40px rgba(51,214,224,0.15)',
+        transform: `scale(${zoom})`,
+      }}>
+        <Img src={src.src} style={{width: '100%', height: '100%', objectFit: 'cover',
+          transform: `scale(${interpolate(p, [0, 1], [1.04, 1.12])}) translateX(${shot.mode === 2 ? interpolate(p, [0, 1], [-14, 14]) : 0}px)`}} />
+      </div>
     </AbsoluteFill>
   );
 };
+
+const Credit = ({text}) => (text ? (
+  <div style={{position: 'absolute', left: 36, right: 36, bottom: 30, color: 'rgba(255,255,255,0.72)', fontFamily: "'DejaVu Sans', sans-serif",
+    fontSize: 21, textShadow: '0 2px 6px #000', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis'}}>
+    Image: {text}
+  </div>
+) : null);
 
 // ---------- colour grade + vignette ----------
 const Grade = () => (
@@ -155,47 +192,75 @@ const AreaIcon = ({area, size = 40}) => {
   );
 };
 
-// ---------- headline: big reveal in the centre, then docks at the top ----------
-const TitleBlock = ({title, area}) => {
+// ---------- opening hook: 2-4 huge words that punch in ----------
+const Hook = ({text}) => {
   const f = useCurrentFrame();
   const {fps} = useVideoConfig();
-  const words = String(title || '').toUpperCase().split(/\s+/).filter(Boolean);
-  const dock = spring({frame: f - Math.round(1.5 * fps), fps, config: {damping: 18, stiffness: 110}});
-  const top = interpolate(dock, [0, 1], [700, 190]);
-  const scale = interpolate(dock, [0, 1], [1, 0.62]);
-  const chipIn = spring({frame: f - 2, fps, config: {damping: 14}});
+  const words = String(text || '').toUpperCase().split(/\s+/).filter(Boolean).slice(0, 5);
+  const out = interpolate(f, [Math.round(1.9 * fps), Math.round(2.3 * fps)], [1, 0], clamp);
+  if (!words.length || out <= 0) return null;
+  const shake = f < 8 ? Math.sin(f * 2.3) * (8 - f) * 1.4 : 0;
+  const size = words.join(' ').length > 18 ? 104 : 124;
   return (
-    <div style={{
-      position: 'absolute', left: 0, right: 0, top, display: 'flex', flexDirection: 'column',
-      alignItems: 'center', transform: `scale(${scale})`, transformOrigin: '50% 0%',
-    }}>
-      <div style={{
-        display: 'flex', alignItems: 'center', gap: 14, padding: '10px 28px', borderRadius: 40, marginBottom: 26,
-        background: 'rgba(6,24,42,0.55)', border: `2px solid ${CYAN}`, color: CYAN, fontSize: 34, letterSpacing: 6,
-        opacity: chipIn, transform: `translateY(${(1 - chipIn) * 30}px)`,
-      }}>
-        <AreaIcon area={area} />{String(area || 'mystery').toUpperCase()}
-      </div>
-      <div style={{
-        width: 960, textAlign: 'center', lineHeight: 1.08, fontSize: 94, color: '#fff',
-        textShadow: '0 6px 30px rgba(0,0,0,0.75), 0 0 2px #000',
-      }}>
-        {words.map((w, i) => {
-          const s = spring({frame: f - 4 - i * 3, fps, config: {damping: 13, stiffness: 140}});
-          return (
-            <span key={i} style={{
-              display: 'inline-block', marginRight: i < words.length - 1 ? '0.28em' : 0, opacity: s,
-              transform: `translateY(${(1 - s) * 60}px) scale(${0.7 + 0.3 * s})`, filter: `blur(${(1 - s) * 8}px)`,
-            }}>{w}</span>
-          );
-        })}
-      </div>
-      <div style={{
-        marginTop: 22, height: 6, width: interpolate(dock, [0, 1], [0, 260]), borderRadius: 3,
-        background: CYAN, boxShadow: `0 0 18px ${CYAN}`,
-      }} />
+    <div style={{position: 'absolute', left: 30, right: 30, top: 1150, textAlign: 'center', opacity: out,
+      transform: `translate(${shake}px, ${-shake * 0.5}px) scale(${1 + (1 - out) * 0.1})`}}>
+      {words.map((w, i) => {
+        const s = spring({frame: f - i * 4, fps, config: {damping: 11, stiffness: 190}});
+        const last = i === words.length - 1;
+        return (
+          <span key={i} style={{
+            display: 'inline-block', margin: '0 0.14em', fontSize: size, lineHeight: 1.05, color: last ? NAVY : '#fff',
+            background: last ? CYAN : 'transparent', padding: last ? '0 18px' : 0, borderRadius: 16,
+            boxShadow: last ? `0 0 50px rgba(51,214,224,0.7)` : 'none', opacity: Math.min(1, s * 1.5),
+            transform: `scale(${interpolate(s, [0, 1], [1.8, 1])}) rotate(${last ? -2 : 0}deg)`,
+            textShadow: last ? 'none' : '0 8px 30px rgba(0,0,0,0.85), 0 0 3px #000',
+          }}>{w}</span>
+        );
+      })}
     </div>
   );
+};
+
+// ---------- animated fact card: number counts up ----------
+const countUp = (value, p) => {
+  const m = /^([^\d-]*)(-?[\d][\d,]*\.?\d*)(.*)$/.exec(String(value));
+  if (!m) return String(value);
+  const raw = m[2], n = parseFloat(raw.replace(/,/g, ''));
+  if (!isFinite(n) || /^(1[5-9]|20)\d\d$/.test(raw)) return String(value);   // years stay as they are
+  const dec = (raw.split('.')[1] || '').length;
+  const v = n * p;
+  const txt = raw.includes(',') ? v.toLocaleString('en-US', {minimumFractionDigits: dec, maximumFractionDigits: dec}) : v.toFixed(dec);
+  return m[1] + txt + m[3];
+};
+
+const FactCard = ({fact}) => {
+  const f = useCurrentFrame();
+  const {fps, durationInFrames} = useVideoConfig();
+  const s = spring({frame: f, fps, config: {damping: 13, stiffness: 150}});
+  const out = interpolate(f, [durationInFrames - 8, durationInFrames], [1, 0], clamp);
+  const p = interpolate(f, [4, 26], [0, 1], {...clamp, easing: Easing.out(Easing.cubic)});
+  return (
+    <div style={{position: 'absolute', left: 0, right: 0, top: 930, display: 'flex', justifyContent: 'center', opacity: out}}>
+      <div style={{
+        padding: '22px 46px 24px', borderRadius: 30, background: 'rgba(6,24,42,0.82)', border: `3px solid ${CYAN}`,
+        boxShadow: `0 0 50px rgba(51,214,224,0.35), 0 20px 60px rgba(0,0,0,0.5)`, textAlign: 'center',
+        transform: `scale(${interpolate(s, [0, 1], [0.6, 1])}) translateY(${(1 - s) * 40}px)`, opacity: Math.min(1, s * 1.4),
+      }}>
+        <div style={{fontSize: 96, lineHeight: 1, color: CYAN, textShadow: `0 0 30px rgba(51,214,224,0.6)`}}>{countUp(String(fact.value).toUpperCase(), p)}</div>
+        <div style={{fontSize: 34, marginTop: 10, color: '#fff', letterSpacing: 2}}>{String(fact.label || '').toUpperCase()}</div>
+      </div>
+    </div>
+  );
+};
+
+// short caption groups: at most 3 words, break after punctuation
+const groupWords = (words) => {
+  let g = 0, n = 0;
+  return words.map((w, i) => {
+    if (i > 0 && (n >= 3 || /[.!?,;:]$/.test(String(words[i - 1].w)) || w.s - words[i - 1].e > 0.35)) { g++; n = 0; }
+    n++;
+    return {...w, c: g};
+  });
 };
 
 // ---------- word-by-word captions ----------
@@ -203,7 +268,7 @@ const Captions = ({words, voiceEnd}) => {
   const f = useCurrentFrame();
   const {fps} = useVideoConfig();
   const t = f / fps;
-  if (!words.length || t > voiceEnd) return null;
+  if (!words.length || t > voiceEnd || t < 2.25) return null;
   let idx = -1;
   for (let i = 0; i < words.length; i++) {
     if (words[i].s <= t) idx = i; else break;
@@ -212,10 +277,12 @@ const Captions = ({words, voiceEnd}) => {
   const c = words[idx].c;
   const chunk = words.filter((w) => w.c === c);
   const pop = spring({frame: Math.round((t - chunk[0].s) * fps), fps, config: {damping: 12, stiffness: 180}});
+  const chars = chunk.reduce((a, w) => a + cleanWord(w.w).length, 0) + chunk.length - 1;
+  const size = chars > 20 ? 58 : chars > 16 ? 66 : 76;
   return (
     <div style={{
-      position: 'absolute', left: 50, right: 50, top: 1190, display: 'flex', flexWrap: 'wrap',
-      justifyContent: 'center', alignItems: 'center', gap: '12px 16px',
+      position: 'absolute', left: 40, right: 40, top: 1240, display: 'flex',
+      justifyContent: 'center', alignItems: 'center', gap: '12px 16px', flexWrap: 'nowrap',
       transform: `scale(${0.85 + 0.15 * pop}) translateY(${(1 - pop) * 25}px)`, opacity: Math.min(1, pop * 1.4),
     }}>
       {chunk.map((w, i) => {
@@ -224,7 +291,7 @@ const Captions = ({words, voiceEnd}) => {
         const ws = spring({frame: Math.max(0, Math.round((t - w.s) * fps)), fps, config: {damping: 10, stiffness: 220}});
         return (
           <span key={i} style={{
-            display: 'inline-block', fontSize: 84, lineHeight: 1.15, padding: '2px 16px', borderRadius: 14,
+            display: 'inline-block', fontSize: size, lineHeight: 1.15, whiteSpace: 'nowrap', padding: '2px 16px', borderRadius: 14,
             color: active ? NAVY : '#fff', background: active ? CYAN : 'transparent',
             boxShadow: active ? '0 0 34px rgba(51,214,224,0.7)' : 'none',
             transform: `scale(${active ? 1 + 0.1 * ws : 1}) rotate(${active ? -2 : 0}deg)`,
@@ -287,11 +354,14 @@ const Outro = ({logo, brand}) => {
   );
 };
 
+const END_PAD = 2.0; // seconds of outro after the voice
+
 const musicVolume = (f, fps, p) => {
   const t = f / fps;
-  const fadeIn = interpolate(t, [0, 1.2], [0, 1], clamp);
-  const fadeOut = interpolate(t, [p.end - 1.4, p.end], [1, 0], clamp);
-  const level = interpolate(t, [p.voiceEnd - 0.2, p.voiceEnd + 0.6], [0.16, 0.42], clamp);
+  const end = Number(p.voiceEnd || 20) + END_PAD;
+  const fadeIn = interpolate(t, [0, 0.6], [0.3, 1], clamp);
+  const fadeOut = interpolate(t, [end - 1.2, end], [1, 0], clamp);
+  const level = interpolate(t, [p.voiceEnd - 0.2, p.voiceEnd + 0.4], [0.16, 0.42], clamp);
   return level * fadeIn * fadeOut;
 };
 
@@ -304,6 +374,37 @@ const presentations = [
   () => fade(),
 ];
 
+// split every segment into ~2.6 s shots; real photos alternate with stock clips (photo first)
+const buildShots = (p, media, fps, segF) => {
+  const images = media.images || [];
+  const segClips = media.segClips || (media.scenes || []).map((x) => (x ? [x] : []));
+  const shots = [];
+  let img = 0;
+  segF.forEach((d, i) => {
+    const n = Math.max(1, Math.round(d / fps / 2.6));
+    const base = Math.floor(d / n);
+    const clips = segClips[i] || [];
+    let c = 0;
+    for (let j = 0; j < n; j++) {
+      const len = j === n - 1 ? d - base * (n - 1) : base;
+      const wantPhoto = images.length && (shots.length === 0 || shots.length % 2 === 0 || !clips.length) && img < images.length * 2;
+      let src = null;
+      if (wantPhoto) {
+        src = {type: 'img', ...images[img % images.length]};
+        img++;
+      } else if (clips.length) {
+        src = {type: 'vid', src: clips[c % clips.length], offset: Math.floor(c / clips.length) * 75};
+        c++;
+      } else if (images.length) {
+        src = {type: 'img', ...images[img % images.length]};
+        img++;
+      }
+      shots.push({seg: i, len, src, segStart: j === 0, opening: shots.length === 0, mode: (shots.length + Number(p.k || 0)) % 3});
+    }
+  });
+  return shots;
+};
+
 export const Story = (p) => {
   const {fps} = useVideoConfig();
   const media = p.media || {};
@@ -312,26 +413,32 @@ export const Story = (p) => {
   segF.slice(0, -1).reduce((acc, d) => { acc += d; cutF.push(acc); return acc; }, 0);
   const voiceEndF = Math.round(Number(p.voiceEnd || 20) * fps);
   const k = Number(p.k || 0);
+  const shots = buildShots(p, media, fps, segF);
 
   const items = [];
-  segF.forEach((d, i) => {
-    const last = i === segF.length - 1;
-    const len = last ? d + 60 : d + T;
+  const credits = [];
+  let at = 0;
+  shots.forEach((sh, i) => {
+    const last = i === shots.length - 1;
+    const nextIsSeg = !last && shots[i + 1].segStart;
+    const len = last ? sh.len + 90 : nextIsSeg ? sh.len + T : sh.len;
     items.push(
       <TransitionSeries.Sequence key={'s' + i} durationInFrames={len}>
-        <Scene src={(media.scenes || [])[i]} idx={i + k} dur={len} />
+        <Shot shot={sh} len={len} />
       </TransitionSeries.Sequence>,
     );
-    if (!last) {
+    if (sh.src && sh.src.type === 'img') credits.push({from: at, len: sh.len, text: sh.src.credit});
+    at += sh.len;
+    if (nextIsSeg) {
       items.push(
-        <TransitionSeries.Transition
-          key={'t' + i}
-          presentation={presentations[(i + k) % presentations.length]()}
-          timing={linearTiming({durationInFrames: T, easing: Easing.inOut(Easing.cubic)})}
-        />,
+        <TransitionSeries.Transition key={'t' + i} presentation={presentations[(i + k) % presentations.length]()}
+          timing={linearTiming({durationInFrames: T, easing: Easing.inOut(Easing.cubic)})} />,
       );
     }
   });
+
+  const facts = (p.facts || []).filter((x) => x && x.value).slice(0, 2);
+  const factAt = (n) => (cutF[n] !== undefined ? cutF[n] + Math.round(0.5 * fps) : null);
 
   return (
     <AbsoluteFill style={{backgroundColor: NAVY, fontFamily: FONT}}>
@@ -341,21 +448,27 @@ export const Story = (p) => {
       {cutF.map((c, i) => (
         <Sequence key={'sw' + i} from={c} durationInFrames={16}><LightSweep /></Sequence>
       ))}
+      {credits.map((c, i) => (
+        <Sequence key={'cr' + i} from={c.from} durationInFrames={Math.max(1, c.len)}><Credit text={c.text} /></Sequence>
+      ))}
       <Sequence durationInFrames={voiceEndF}><Brand logo={media.logo} name={p.brand} /></Sequence>
-      <Sequence durationInFrames={voiceEndF}><TitleBlock title={p.title} area={p.area} /></Sequence>
-      <Captions words={p.words || []} voiceEnd={Number(p.voiceEnd || 20)} />
+      <Sequence durationInFrames={Math.round(2.4 * fps)}><Hook text={p.hook || p.title} /></Sequence>
+      {facts.map((fact, i) => (factAt(i) !== null && factAt(i) < voiceEndF - fps ? (
+        <Sequence key={'f' + i} from={factAt(i)} durationInFrames={Math.round(2.6 * fps)}><FactCard fact={fact} /></Sequence>
+      ) : null))}
+      <Captions words={groupWords(p.words || [])} voiceEnd={Number(p.voiceEnd || 20)} />
       <Sequence durationInFrames={voiceEndF}><Progress total={voiceEndF} /></Sequence>
       <Sequence from={Math.max(0, voiceEndF - 3)}><Outro logo={media.logo} brand={p.brand} /></Sequence>
 
       {media.voice ? <Audio src={media.voice} /> : null}
       {media.music ? <Audio src={media.music} loop volume={(f) => musicVolume(f, fps, p)} /> : null}
-      {media.boom ? <Audio src={media.boom} volume={0.7} /> : null}
+      {media.boom ? <Audio src={media.boom} volume={0.8} /> : null}
       {media.whoosh ? cutF.map((c, i) => (
         <Sequence key={'wh' + i} from={Math.max(0, c - 12)} durationInFrames={30}><Audio src={media.whoosh} volume={0.45} /></Sequence>
       )) : null}
-      {media.whoosh ? (
-        <Sequence from={Math.round(1.45 * fps)} durationInFrames={30}><Audio src={media.whoosh} volume={0.25} /></Sequence>
-      ) : null}
+      {media.boom ? facts.map((fact, i) => (factAt(i) !== null ? (
+        <Sequence key={'fb' + i} from={factAt(i)} durationInFrames={40}><Audio src={media.boom} volume={0.35} /></Sequence>
+      ) : null)) : null}
     </AbsoluteFill>
   );
 };

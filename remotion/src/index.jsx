@@ -12,6 +12,7 @@ font.load()
 const sample = {
   k: 0, title: 'Something strange is hiding in deep space', area: 'space', brand: 'Deep Dot Files',
   duration: 22, voiceEnd: 22.3, end: 24.5, segDur: [5, 9, 10.5],
+  hook: 'NOBODY CAN EXPLAIN THIS', facts: [{value: '11 KM', label: 'below the ice'}],
   words: [{w: 'Something', s: 0.2, e: 0.7, c: 0, seg: 0}, {w: 'strange', s: 0.7, e: 1.2, c: 0, seg: 0}],
   media: {},
 };
@@ -25,7 +26,7 @@ const Root = () => (
     fps={30}
     durationInFrames={735}
     defaultProps={sample}
-    calculateMetadata={({props}) => ({durationInFrames: Math.max(60, Math.ceil(Number(props.end || 24) * 30))})}
+    calculateMetadata={({props}) => ({durationInFrames: Math.max(60, Math.ceil((Number(props.voiceEnd || 20) + 2) * 30))})}
   />
 );
 
