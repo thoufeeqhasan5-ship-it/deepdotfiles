@@ -20,8 +20,9 @@ jobs:
           SAMPLE_TEXT: ${{ inputs.text }}
         run: bash cloud/voice_test.sh
       - name: Keep the samples for 7 days
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: voice-samples
-          path: voice-samples/*.mp3
+          path: voice-samples/*.wav
           retention-days: 7
