@@ -14,6 +14,7 @@ for c in json.loads(os.environ.get("N8N_CREDENTIALS") or "[]"):
 docker compose build --quiet voice
 docker compose up -d kokoro voice
 for i in $(seq 1 120); do curl -sf http://localhost:8881/ >/dev/null && curl -sf http://localhost:8880/v1/audio/voices >/dev/null && break; sleep 5; done
+sleep 20   # let the narrator service finish loading
 
 TEXT="${SAMPLE_TEXT:-There is a star out there that keeps dimming, and nobody knows why. It is called Tabby's Star, and it sits about fourteen hundred light years from Earth. Most stars dim by about one percent when a planet passes in front. But here's the strange part. This star sometimes dims by more than twenty percent. Scientists now think a huge cloud of dust is the most likely answer.}"
 n=0
@@ -26,13 +27,14 @@ for v in \
   n=$((n + 1))
   name=$(printf '%02d-%s' "$n" "$(echo "$v" | tr ':' '-')")
   body=$(python3 -c 'import json,sys; print(json.dumps({"voice": sys.argv[1], "input": sys.argv[2]}))' "$v" "$TEXT")
-  if curl -sf -m 900 -X POST -H 'Content-Type: application/json' -d "$body" http://localhost:8881/sample -o "/tmp/$name.wav"; then
-    ffmpeg -hide_banner -loglevel error -y -i "/tmp/$name.wav" -b:a 128k "../voice-samples/$name.mp3"
+  code=$(curl -s -m 900 -X POST -H 'Content-Type: application/json' -d "$body" http://localhost:8881/sample -o "../voice-samples/$name.wav" -w '%{http_code}' || echo 000)
+  if [ "$code" = "200" ]; then
     echo "OK   $name"
   else
-    echo "FAIL $name"
+    echo "FAIL $name (HTTP $code): $(head -c 400 "../voice-samples/$name.wav" 2>/dev/null | tr '\n' ' ')"
+    rm -f "../voice-samples/$name.wav"
   fi
 done
 docker compose logs --no-color --tail 40 voice || true
 docker compose down -v >/dev/null 2>&1 || true
-ls ../voice-samples
+ls -l ../voice-samples
