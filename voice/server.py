@@ -10,9 +10,10 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import numpy as np
 
 KOKORO = os.environ.get("KOKORO_URL", "http://kokoro:8880/dev/captioned_speech")
-EXAG = float(os.environ.get("EXAGGERATION", "0.6"))      # emotion: 0.5 natural, 0.7+ dramatic
-CFG = float(os.environ.get("CFG_WEIGHT", "0.35"))         # lower = slower, calmer pacing
-REF_VOICE = os.environ.get("REF_VOICE", "bm_george")       # Kokoro voice used as the reference to clone ("" = Chatterbox default)
+EXAG = float(os.environ.get("EXAGGERATION", "0.5"))      # emotion: 0.5 natural, 0.7+ dramatic
+CFG = float(os.environ.get("CFG_WEIGHT", "0.5"))          # 0.5 = Chatterbox's natural pacing
+REF_VOICE = os.environ.get("REF_VOICE", "")                # "" = Chatterbox's own natural voice; or a Kokoro voice name to clone
+REF_FILE = os.environ.get("REF_FILE", "/files/assets/narrator.wav")  # optional real voice sample (10-20 s) to clone
 LOCK = threading.Lock()
 _model = None
 _whisper = None
@@ -56,50 +57,115 @@ def kokoro(body: bytes) -> bytes:
 
 
 def reference():
-    """A short clip of the channel's Kokoro voice, so Chatterbox keeps the same narrator."""
+    """Voice to clone: a real voice sample if one is provided, else (optionally) a Kokoro voice, else Chatterbox's own."""
     global _ref
-    if _ref is not None or not REF_VOICE:
+    if _ref is not None:
         return _ref or None
-    try:
-        text = ("Deep below the surface, something has been waiting for a very long time. "
-                "Scientists have finally found a way to listen, and what they heard was not what anyone expected.")
-        data = json.loads(kokoro(json.dumps({"model": "kokoro", "input": text, "voice": REF_VOICE, "speed": 0.95,
-                                             "response_format": "wav", "stream": False}).encode()))
-        path = "/tmp/ref.wav"
-        open(path, "wb").write(base64.b64decode(data["audio"]))
-        _ref = path
-        log("reference voice ready:", REF_VOICE)
-    except Exception as e:
-        log("no reference voice, using Chatterbox default:", e)
-        _ref = ""
+    _ref = ""
+    if REF_FILE and os.path.exists(REF_FILE) and os.path.getsize(REF_FILE) > 50000:
+        _ref = REF_FILE
+        log("cloning narrator sample:", REF_FILE)
+    elif REF_VOICE:
+        try:
+            text = ("Deep below the surface, something has been waiting for a very long time. "
+                    "Scientists have finally found a way to listen, and what they heard was not what anyone expected.")
+            data = json.loads(kokoro(json.dumps({"model": "kokoro", "input": text, "voice": REF_VOICE, "speed": 0.95,
+                                                 "response_format": "wav", "stream": False}).encode()))
+            open("/tmp/ref.wav", "wb").write(base64.b64decode(data["audio"]))
+            _ref = "/tmp/ref.wav"
+            log("cloning Kokoro voice:", REF_VOICE)
+        except Exception as e:
+            log("no reference voice:", e)
+    else:
+        log("using Chatterbox's own voice")
     return _ref or None
 
 
-def sentences(text):
-    parts = [p.strip() for p in re.split(r"(?<=[.!?])\s+", text.strip()) if p.strip()]
+def norm(w):
+    return re.sub(r"[^a-z0-9]", "", str(w).lower())
+
+
+def coverage(expected, stamps):
+    """Share of the expected words that were actually spoken, in order."""
+    exp = [norm(w) for w in expected.split() if norm(w)]
+    got = [norm(s["word"]) for s in stamps if norm(s["word"])]
+    j = hit = 0
+    for e in exp:
+        for k in range(j, min(len(got), j + 4)):
+            g = got[k]
+            if g == e or (min(len(g), len(e)) >= 4 and g[:4] == e[:4]) or (e.isdigit() and not g.isalpha()):
+                hit += 1
+                j = k + 1
+                break
+    return hit / max(1, len(exp))
+
+
+def phrases(text):
+    """Split into sentences, and long sentences into shorter phrases (Chatterbox drops words on long input).
+    Returns [(phrase, pause_after_seconds)]."""
     out = []
-    for p in parts:
-        if out and len(p.split()) < 4:
-            out[-1] += " " + p
+    for sent in [p.strip() for p in re.split(r"(?<=[.!?])\s+", text.strip()) if p.strip()]:
+        parts = [sent]
+        if len(sent.split()) > 14:
+            bits = [b.strip() for b in re.split(r"(?<=[,;:\u2014])\s+|\s+(?=\u2014)|\s+-\s+", sent) if b.strip()]
+            parts, cur = [], ""
+            for b in bits:
+                cur = (cur + " " + b).strip()
+                if len(cur.split()) >= 5:
+                    parts.append(cur)
+                    cur = ""
+            if cur:
+                if parts and len(cur.split()) < 4:
+                    parts[-1] += " " + cur
+                else:
+                    parts.append(cur)
+        for i, p in enumerate(parts):
+            p = p.lstrip("\u2014\u2013- ").strip()
+            out.append((p, 0.38 if i == len(parts) - 1 else 0.16))
+    # glue very short sentences to the previous one
+    merged = []
+    for p, gap in out:
+        if merged and len(p.split()) < 3:
+            merged[-1] = (merged[-1][0] + " " + p, gap)
         else:
-            out.append(p)
-    return out or [text]
+            merged.append((p, gap))
+    return merged or [(text, 0.3)]
+
+
+def speak(m, text, first, ref):
+    """Generate one phrase, check every word was spoken, retry if not. Returns (audio, coverage)."""
+    sr = m.sr
+    best, best_cov = None, -1.0
+    for attempt in range(3):
+        kw = {"exaggeration": min(1.0, EXAG + (0.1 if first else 0.0)), "cfg_weight": CFG}
+        if ref:
+            kw["audio_prompt_path"] = ref
+        wav = m.generate(text, **kw)
+        a = wav.squeeze().detach().cpu().numpy().astype(np.float32)
+        stamps = align(a, sr)
+        cov = coverage(text, stamps)
+        if stamps:  # trim silence / stray sounds before the first and after the last word
+            a = a[max(0, int((stamps[0]["start_time"] - 0.08) * sr)): int((stamps[-1]["end_time"] + 0.18) * sr)]
+        if cov > best_cov:
+            best, best_cov = a, cov
+        if cov >= 0.9:
+            break
+        log(f"  retry ({cov:.0%} of words spoken): {text[:60]}")
+    return best, best_cov
 
 
 def synth(text):
     m = model()
     ref = reference()
     sr = m.sr
-    pieces = [np.zeros(int(sr * 0.12), np.float32)]
-    for i, s in enumerate(sentences(text)):
-        kw = {"exaggeration": min(1.2, EXAG + (0.15 if i == 0 else 0.0)), "cfg_weight": CFG}
-        if ref:
-            kw["audio_prompt_path"] = ref
+    pieces = [np.zeros(int(sr * 0.15), np.float32)]
+    for i, (p, gap) in enumerate(phrases(text)):
         t = time.time()
-        wav = m.generate(s, **kw)
-        a = wav.squeeze().detach().cpu().numpy().astype(np.float32)
-        log(f"sentence {i + 1}: {len(a) / sr:.1f}s audio in {time.time() - t:.0f}s")
-        pieces += [a, np.zeros(int(sr * 0.28), np.float32)]
+        a, cov = speak(m, p, i == 0, ref)
+        log(f"phrase {i + 1}: {len(a) / sr:.1f}s, {cov:.0%} of words, {time.time() - t:.0f}s")
+        if cov < 0.7:
+            raise ValueError(f"Chatterbox kept skipping words in: {p}")
+        pieces += [a, np.zeros(int(sr * gap), np.float32)]
     audio = np.concatenate(pieces)
     peak = float(np.max(np.abs(audio))) or 1.0
     return (audio / peak * 0.9).astype(np.float32), sr
@@ -144,7 +210,10 @@ class Handler(BaseHTTPRequestHandler):
             if not 5 < dur < 80:
                 raise ValueError(f"odd length {dur:.1f}s")
             stamps = align(audio, sr)
-            log(f"Chatterbox voice {dur:.1f}s, {len(stamps)} words timed, {time.time() - t:.0f}s total")
+            total = coverage(text, stamps)
+            if total < 0.85:
+                raise ValueError(f"only {total:.0%} of the script was spoken")
+            log(f"{total:.0%} of the script spoken. " + f"Chatterbox voice {dur:.1f}s, {len(stamps)} words timed, {time.time() - t:.0f}s total")
             self._send(200, json.dumps({"audio": wav_b64(audio, sr), "audio_format": "wav",
                                         "timestamps": stamps, "engine": "chatterbox"}).encode())
         except Exception:
