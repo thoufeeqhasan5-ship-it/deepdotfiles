@@ -221,6 +221,26 @@ const Hook = ({text}) => {
   );
 };
 
+// ---------- what this video is about: stays at the top (after the hook) ----------
+const TopicBar = ({title, area}) => {
+  const f = useCurrentFrame();
+  const {fps} = useVideoConfig();
+  const s = spring({frame: f, fps, config: {damping: 16}});
+  return (
+    <div style={{position: 'absolute', left: 40, right: 40, top: 168, display: 'flex', alignItems: 'center', gap: 16,
+      opacity: s, transform: `translateY(${(1 - s) * -20}px)`}}>
+      <div style={{flex: 'none', width: 58, height: 58, borderRadius: 16, background: 'rgba(6,24,42,0.75)',
+        border: `2px solid ${CYAN}`, display: 'flex', alignItems: 'center', justifyContent: 'center'}}>
+        <AreaIcon area={area} size={36} />
+      </div>
+      <div style={{fontSize: 44, lineHeight: 1.12, color: '#fff', textShadow: '0 4px 16px rgba(0,0,0,0.9), 0 0 2px #000',
+        display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden'}}>
+        {String(title || '').toUpperCase()}
+      </div>
+    </div>
+  );
+};
+
 // ---------- animated fact card: number counts up ----------
 const countUp = (value, p) => {
   const m = /^([^\d-]*)(-?[\d][\d,]*\.?\d*)(.*)$/.exec(String(value));
@@ -453,6 +473,7 @@ export const Story = (p) => {
       ))}
       <Sequence durationInFrames={voiceEndF}><Brand logo={media.logo} name={p.brand} /></Sequence>
       <Sequence durationInFrames={Math.round(2.4 * fps)}><Hook text={p.hook || p.title} /></Sequence>
+      <Sequence from={Math.round(2.2 * fps)} durationInFrames={Math.max(1, voiceEndF - Math.round(2.2 * fps))}><TopicBar title={p.story || p.title} area={p.area} /></Sequence>
       {facts.map((fact, i) => (factAt(i) !== null && factAt(i) < voiceEndF - fps ? (
         <Sequence key={'f' + i} from={factAt(i)} durationInFrames={Math.round(2.6 * fps)}><FactCard fact={fact} /></Sequence>
       ) : null))}
