@@ -19,6 +19,14 @@ for s in set(walk([c.get("data") for c in json.loads(os.environ["N8N_CREDENTIALS
     print("::add-mask::" + s.replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A"))
 PY
 printf '%s' "$N8N_CREDENTIALS" > run/credentials.json
+# the Gemini key (for Gemini voices) from the saved n8n keys
+export GEMINI_KEY="$(python3 -c '
+import json, os
+for c in json.loads(os.environ["N8N_CREDENTIALS"]):
+    d = c.get("data") or {}
+    if str(d.get("name", "")).lower() == "x-goog-api-key" and d.get("value"):
+        print(d["value"]); break
+')"
 export N8N_ENCRYPTION_KEY="$(openssl rand -hex 24)"
 
 echo "::group::Build the tools"
@@ -34,7 +42,7 @@ echo "::group::Pick topics"
 python3 evergreen.py evergreen.txt ../files/history.json run/evergreen.json || echo "[]" > run/evergreen.json
 export EVERGREEN=run/evergreen.json HISTORY=../files/history.json
 ID=$(python3 prepare.py ../workflow/workflows.json run/workflow.json "${PUBLISH:-true}")
-echo "Voice: $VOICE_SERVICE | Animated edit: $REMOTION | Slot: ${FOCUS:-all}"
+echo "Voice service: $VOICE_SERVICE (${VOICE:-edge:en-US-AndrewNeural}, pace ${PACE:-0.9}) | Animated edit: $REMOTION | Slot: ${FOCUS:-all}"
 echo "::endgroup::"
 
 echo "::group::Wait for Kokoro"
