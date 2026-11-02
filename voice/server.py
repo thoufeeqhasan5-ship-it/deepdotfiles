@@ -1,6 +1,6 @@
 """Deep Dot Files narrator service.
 
-Engines (pick with VOICE, e.g. "edge:en-US-AndrewNeural", "gemini:Charon", "kokoro:bm_george", "chatterbox"):
+Engines (pick with VOICE / VOICE_NATURE, e.g. "edge:en-US-BrianNeural", "gemini:Charon", "kokoro:bm_george", "chatterbox"):
   edge       - Microsoft Edge neural voices (free, very natural)
   gemini     - Google Gemini TTS (natural, needs the Gemini key; free quota is small)
   kokoro     - Kokoro (open source, runs here)
@@ -8,15 +8,18 @@ Engines (pick with VOICE, e.g. "edge:en-US-AndrewNeural", "gemini:Charon", "koko
 If the chosen engine fails or skips words, the next one in FALLBACK is used.
 
 POST /dev/captioned_speech {"input": "..."}  -> {"audio": <base64 wav>, "audio_format": "wav", "timestamps": [...], "engine": "..."}
-POST /sample {"voice": "edge:en-GB-RyanNeural", "input": "..."} -> audio/wav (for the voice test)
+POST /sample {"voice": "edge:en-US-BrianNeural", "input": "..."} -> audio/wav (for the voice test)
 """
 import asyncio, base64, io, json, os, re, subprocess, tempfile, threading, time, traceback, urllib.request, wave
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import numpy as np
 
-VOICE = os.environ.get("VOICE", "edge:en-US-AndrewNeural")
-FALLBACK = [v.strip() for v in os.environ.get("FALLBACK", "edge:en-US-AndrewNeural,kokoro:bm_george").split(",") if v.strip()]
+FOCUS = os.environ.get("FOCUS", "").lower()
+VOICE_MAIN = os.environ.get("VOICE", "edge:en-US-BrianNeural")              # space + technology
+VOICE_NATURE = os.environ.get("VOICE_NATURE", "edge:en-GB-SoniaNeural")     # ocean + nature
+VOICE = VOICE_NATURE if ("ocean" in FOCUS or "nature" in FOCUS) else VOICE_MAIN
+FALLBACK = [v.strip() for v in os.environ.get("FALLBACK", f"{VOICE_NATURE if VOICE == VOICE_MAIN else VOICE_MAIN},edge:en-US-ChristopherNeural,kokoro:bm_george").split(",") if v.strip()]
 PACE = float(os.environ.get("PACE", "0.9"))            # 1.0 = normal speed, 0.9 = 10% slower
 KOKORO = os.environ.get("KOKORO_URL", "http://kokoro:8880/dev/captioned_speech")
 GEMINI_KEY = os.environ.get("GEMINI_KEY", "")
@@ -104,7 +107,7 @@ def tts_edge(text, voice):
     rate = f"{round((PACE - 1) * 100):+d}%"
     out = tempfile.mktemp(suffix=".mp3")
     async def run():
-        await edge_tts.Communicate(text, voice or "en-US-AndrewNeural", rate=rate).save(out)
+        await edge_tts.Communicate(text, voice or "en-US-BrianNeural", rate=rate).save(out)
     asyncio.run(run())
     data = open(out, "rb").read()
     os.remove(out)
