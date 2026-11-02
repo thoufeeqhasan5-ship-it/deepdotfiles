@@ -2,11 +2,10 @@ name: Deep Dot Files videos
 
 on:
   schedule:
-    # One video per run, about 9 AM, 2 PM and 7 PM India time.
-    # (GitHub times are UTC and often start a few minutes late.)
-    - cron: "20 3 * * *"    # ~9 AM IST  -> SPACE
-    - cron: "20 8 * * *"    # ~2 PM IST  -> OCEAN / NATURE
-    - cron: "20 13 * * *"   # ~7 PM IST  -> TECHNOLOGY
+    # One video per run, timed for a global audience (GitHub times are UTC and often start late).
+    - cron: "40 11 * * *"   # ~12:00 UTC = 5:30 PM India, 1 PM Europe, 8 AM US East   -> SPACE
+    - cron: "40 16 * * *"   # ~17:00 UTC = 10:30 PM India, 6 PM Europe, 1 PM US East  -> OCEAN / NATURE
+    - cron: "40 22 * * *"   # ~23:00 UTC = 4:30 AM India, 7 PM US East, 4 PM US West   -> TECHNOLOGY
   workflow_dispatch:
     inputs:
       slot:
@@ -32,7 +31,8 @@ jobs:
     timeout-minutes: 75
     env:
       PUBLISH: ${{ github.event_name == 'schedule' || inputs.publish }}
-      FOCUS: ${{ github.event.schedule == '20 3 * * *' && 'SPACE' || github.event.schedule == '20 8 * * *' && 'the OCEAN or NATURE' || github.event.schedule == '20 13 * * *' && 'TECHNOLOGY' || inputs.slot }}
+      SCRIPT_WORDS: "60-75"   # spoken words per video: 60-75 = about 30-35 s; 90-110 = about 45-50 s (max for Reels: 90 s)
+      FOCUS: ${{ github.event.schedule == '40 11 * * *' && 'SPACE' || github.event.schedule == '40 16 * * *' && 'the OCEAN or NATURE' || github.event.schedule == '40 22 * * *' && 'TECHNOLOGY' || inputs.slot }}
     steps:
       - uses: actions/checkout@v4
 
