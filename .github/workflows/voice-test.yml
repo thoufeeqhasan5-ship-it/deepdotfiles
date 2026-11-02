@@ -1,0 +1,27 @@
+name: Voice test
+
+on:
+  workflow_dispatch:
+    inputs:
+      text:
+        description: "Text to read (leave empty for the sample story)"
+        type: string
+        default: ""
+
+jobs:
+  samples:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - name: Read the sample in every voice
+        env:
+          N8N_CREDENTIALS: ${{ secrets.N8N_CREDENTIALS }}
+          SAMPLE_TEXT: ${{ inputs.text }}
+        run: bash cloud/voice_test.sh
+      - name: Keep the samples for 7 days
+        uses: actions/upload-artifact@v4
+        with:
+          name: voice-samples
+          path: voice-samples/*.mp3
+          retention-days: 7
