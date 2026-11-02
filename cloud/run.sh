@@ -42,7 +42,7 @@ echo "::group::Pick topics"
 python3 evergreen.py evergreen.txt ../files/history.json run/evergreen.json || echo "[]" > run/evergreen.json
 export EVERGREEN=run/evergreen.json HISTORY=../files/history.json
 ID=$(python3 prepare.py ../workflow/workflows.json run/workflow.json "${PUBLISH:-true}")
-echo "Voice service: $VOICE_SERVICE (${VOICE:-edge:en-US-AndrewNeural}, pace ${PACE:-0.9}) | Animated edit: $REMOTION | Slot: ${FOCUS:-all}"
+echo "Voice service: $VOICE_SERVICE (Brian / Sonia, pace ${PACE:-0.9}) | Animated edit: $REMOTION | Slot: ${FOCUS:-all}"
 echo "::endgroup::"
 
 echo "::group::Wait for Kokoro"

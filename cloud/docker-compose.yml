@@ -25,8 +25,9 @@ services:
   voice:            # narrator - choose the voice here (run the "Voice test" on GitHub to hear them)
     build: ../voice
     environment:
-      - VOICE=${VOICE:-edge:en-US-AndrewNeural}
-      - FALLBACK=edge:en-US-AndrewNeural,kokoro:bm_george
+      - VOICE=${VOICE:-edge:en-US-BrianNeural}               # space + technology (voice test #3)
+      - VOICE_NATURE=${VOICE_NATURE:-edge:en-GB-SoniaNeural}  # ocean + nature (voice test #6)
+      - FOCUS=${FOCUS:-}
       - PACE=${PACE:-0.9}                 # 1.0 normal speed, 0.9 = 10% slower
       - GEMINI_KEY=${GEMINI_KEY:-}
       - KOKORO_URL=http://kokoro:8880/dev/captioned_speech
