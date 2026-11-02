@@ -101,29 +101,37 @@ if focus:
     code = "const EVERGREEN_LIST = " + json.dumps(ev_lines) + ";\n" + code
 
     # ---- Version 2 script: hook-first, 4 beats, loop ending, real-image search, fact cards ----
-    words = os.environ.get("SCRIPT_WORDS", "60-75")
+    words = os.environ.get("SCRIPT_WORDS", "80-100")
+    try:
+        lo, hi = (int(x) for x in words.split("-"))
+    except Exception:
+        lo, hi = 80, 100
+    lo, hi = max(lo, 80), max(hi, 100)   # clear, complete stories need at least ~80 words (about 35-40 s)
+    per = lambda f: f"{max(8, round(lo * f))}-{max(10, round(hi * f))}"
     a = code.find("For EACH story write 3 segments")
     b = code.find("Return ONLY valid JSON")
     if a < 0 or b < 0:
         sys.exit("Build Prompt text changed - could not find the segment instructions.")
-    code = code[:a] + f"""For the story write 4 segments; together they are the video's spoken voiceover of {words} words, read at a calm but gripping pace. Short, punchy sentences (max 14 words each). Built for maximum watch time:
-- Segment 1 = THE HOOK, max 12 words: the single most startling fact or question, said in the first 2 seconds. No intro, no channel name, no "did you know".
-- Segment 2 = THE SETUP: what it is, where, who found it - told like a mystery unfolding.
-- Segment 3 = THE STRANGE PART: start with a turn like "But here's the strange part" and reveal the most surprising fact.
-- Segment 4 = THE PAYOFF + LOOP: what it might mean, then end with a short open question that connects back to the hook so the video loops naturally. Do NOT mention the channel name or ask people to follow.
-"hook_text": 2-4 BIG on-screen words that make people stop scrolling (e.g. "THIS SHOULDN'T EXIST", "NOBODY CAN EXPLAIN THIS", "IT'S STILL OUT THERE"). Must be honest.
+    code = code[:a] + f"""For the story write 5 segments that tell ONE complete, clear story that a 12-year-old with no science background can fully understand. By the end the viewer must know exactly WHAT the thing is, WHERE and WHEN it was found, WHAT is strange about it and WHAT scientists think it means.
+Total voiceover: {lo}-{hi} words (count them - this is a hard requirement), calm and clear. Short sentences (max 15 words). Plain everyday words; explain any technical term in a few words (e.g. "an exoplanet - a planet orbiting another star"). Use simple comparisons for big numbers (e.g. "three times wider than Earth").
+- Segment 1 = HOOK ({per(0.12)} words): a startling fact or question that already NAMES the subject in plain words (e.g. "There is a star out there that keeps dimming, and nobody knows why.").
+- Segment 2 = WHAT IT IS ({per(0.22)} words): what it is, where it is, when and how it was found.
+- Segment 3 = THE KEY DETAIL ({per(0.22)} words): the main facts, with one clear number or comparison.
+- Segment 4 = THE STRANGE PART ({per(0.22)} words): start with "But here's the strange part" and explain clearly what does not fit.
+- Segment 5 = THE ANSWER SO FAR ({per(0.22)} words): what scientists currently think it means, then one clear takeaway sentence. Resolve the story - no cliffhanger, never leave the viewer confused. Do NOT mention the channel name or ask people to follow.
+"hook_text": 3-5 BIG on-screen words that say clearly what the video is about AND make people curious (e.g. "THIS STAR KEEPS DISAPPEARING", "A LAKE UNDER 4 KM OF ICE", "A 2,000-YEAR-OLD COMPUTER"). Specific, not vague, and honest.
 "facts": 1 or 2 striking facts taken EXACTLY from the source, each as a short "value" (a number with unit or a short term, max 12 characters, e.g. "11 KM", "1977", "-89 C", "13.8 BILLION") and a "label" of max 5 words (e.g. "below the ice"). Only facts that are in the source.
-"image_query": the English name of the real subject to find REAL photos of it (e.g. "Europa moon", "Antikythera mechanism", "giant squid", "Blood Falls Antarctica"). Never a person.
-The on-screen "title" is a CLEAR, plain-English headline that tells the viewer what the story is about in max 7 words (used for the post title).
-For each segment give "visuals": 3 DIFFERENT 1-3 word English stock-video search terms that show what is being said at that moment, as concretely and atmospherically as possible (e.g. "foggy forest", "deep ocean", "night sky stars", "arctic ice", "cave darkness", "telescope", "laboratory microscope"). Never use names of people or brands.
+"image_query": the most specific English name of the real subject so a photo search finds IT (e.g. "Europa moon", "Antikythera mechanism", "giant squid", "Blood Falls Antarctica", "KIC 8462852"). Never a person, never a general word like "space", "planet" or "ocean".
+The "title" is a CLEAR, plain-English headline that tells the viewer what the story is about in max 7 words (e.g. "A star that dims for no reason"). It stays on screen during the video.
+For each segment give "visuals": 3 DIFFERENT 1-3 word English stock-video search terms that show what is being said at that moment, as concretely as possible (e.g. "foggy forest", "deep ocean", "night sky stars", "arctic ice", "telescope", "laboratory microscope"). Never use names of people or brands.
 "caption": start with a question people will want to answer in the comments (e.g. "Would you go down there?"), then 1 short line, then 4 relevant hashtags.
 
 """ + code[b:]
     swaps2 = [
         ('{ "text": "why it matters + closing line", "visuals": ["search term", "search term"] }',
-         '{ "text": "the strange part", "visuals": ["search term", "search term", "search term"] },\n        { "text": "payoff + looping question", "visuals": ["search term", "search term", "search term"] }'),
+         '{ "text": "the key detail", "visuals": ["search term", "search term", "search term"] },\n        { "text": "the strange part", "visuals": ["search term", "search term", "search term"] },\n        { "text": "the answer so far + clear takeaway", "visuals": ["search term", "search term", "search term"] }'),
         ('"source": "the Link of the story"',
-         '"source": "the Link of the story",\n      "hook_text": "2-4 big words",\n      "facts": [{ "value": "11 KM", "label": "below the ice" }],\n      "image_query": "name of the real subject"'),
+         '"source": "the Link of the story",\n      "hook_text": "3-5 big words",\n      "facts": [{ "value": "11 KM", "label": "below the ice" }],\n      "image_query": "name of the real subject"'),
         ("source: { type: 'STRING' } } } } } } }",
          "source: { type: 'STRING' }, hook_text: { type: 'STRING' }, image_query: { type: 'STRING' }, "
          "facts: { type: 'ARRAY', items: { type: 'OBJECT', required: ['value', 'label'], properties: { value: { type: 'STRING' }, label: { type: 'STRING' } } } } } } } } } }"),
@@ -140,6 +148,7 @@ For each segment give "visuals": 3 DIFFERENT 1-3 word English stock-video search
     pc = ps["parameters"]["jsCode"]
     for old, new in [
         (".slice(0, 2);\n    if (!v.length) v = ['city skyline'];", ".slice(0, 3);\n    if (!v.length) v = ['city skyline'];"),
+        ("s.segments.slice(0, 4)", "s.segments.slice(0, 5)"),
         ("tags: tags.join(','),",
          "tags: tags.join(','),\n    hook_text: String(s.hook_text || '').slice(0, 40),\n    image_query: String(s.image_query || '').slice(0, 80),\n"
          "    facts: (Array.isArray(s.facts) ? s.facts : []).slice(0, 2).map(f => ({ value: String(f.value || '').slice(0, 14), label: String(f.label || '').slice(0, 40) })).filter(f => f.value),\n"
